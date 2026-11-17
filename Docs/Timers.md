@@ -1,6 +1,6 @@
 # Timer Sistemi — Plan
 
-> Durum: planlandı (2026-11-17). Karşılığı: Unreal `FTimerManager`, `FTimerHandle`.
+> Durum: `TimerHandle` + `TimerManager` uygulandı (2026-11-17; 39 test, 17 timer'lı kare ≈ 179 ns, 0 allocation); `TimerRunner`/`TimersPlugin` bekliyor. Karşılığı: Unreal `FTimerManager`, `FTimerHandle`.
 
 ## Amaç
 Oyun zamanına bağlı, tek seferlik veya tekrarlı geri çağrılar: effect süresi ve periyodu, cooldown, gecikmeli işler. Godot `Timer` düğümü ve `SceneTree.CreateTimer` yerine: düğüm/nesne oluşturmaz, saf C#, tick'te allocation yok, sıra ve zamanlama kesin.

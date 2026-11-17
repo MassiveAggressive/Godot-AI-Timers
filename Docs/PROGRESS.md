@@ -10,7 +10,7 @@
 - (boş)
 
 ## Yapılacak
-- [ ] Editörde eklentiyi etkinleştirip autoload'un eklendiğini doğrula; üretilen `.cs.uid` dosyalarını commit'le
+- [ ] Editörde eklentiyi etkinleştirip autoload'un eklendiğini doğrula
 
 ## Notlar
 - Testler Godot içinde headless çalıştırılır: `Godot_..._console.exe --headless --path <proje> res://<test sahnesi>`; geçici test sahnesi proje kökünde açılıp sonra silinir.

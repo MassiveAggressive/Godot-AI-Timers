@@ -4,48 +4,47 @@ using Godot;
 namespace Timers;
 
 /// <summary>
-/// One-shot and repeating timers driven by <see cref="Advance"/>. Timers fire in order of fire time, then start order
-/// (a repeating timer keeps its first start order), so of two timers ending together the one started first runs first.
-/// During a callback <see cref="Time"/> is that timer's fire time, and timers started there count from it.
-/// Repeats fire at first fire time + k × interval, so no error builds up. Main thread only.
+/// Game time timers with a static API: <c>TimerManager.Start(2f, OnDone)</c>. The autoload added by the Timers plugin
+/// advances them every frame; it is pausable, so timers stop while the scene tree is paused.
+/// Timers fire in order of fire time, then start order (a repeating timer keeps its first start order), so of two
+/// timers ending together the one started first runs first. During a callback <see cref="Time"/> is that timer's fire
+/// time, and timers started there count from it. Repeats fire at first fire time + k × interval, so no error builds up.
+/// Timers outlive scenes: stop the ones whose callback belongs to a node when that node leaves the tree.
 /// </summary>
-public sealed class TimerManager
+public partial class TimerManager : Node
 {
-    private TimerSlot[] _slots;
-    private int[] _heap;
-    private int[] _freeSlots;
-    private int _heapCount;
-    private int _freeCount;
-    private int _usedSlots;
-    private long _nextOrder;
-    private bool _advancing;
+    private const int InitialCapacity = 64;
 
-    public TimerManager(int capacity = 16)
-    {
-        capacity = Math.Max(1, capacity);
-        _slots = new TimerSlot[capacity];
-        _heap = new int[capacity];
-        _freeSlots = new int[capacity];
-    }
+    private static TimerSlot[] _slots = new TimerSlot[InitialCapacity];
+    private static int[] _heap = new int[InitialCapacity];
+    private static int[] _freeSlots = new int[InitialCapacity];
+    private static int _heapCount;
+    private static int _freeCount;
+    private static int _usedSlots;
+    private static long _nextOrder;
+    private static bool _advancing;
+    private static TimerManager _instance;
+    private static bool _warnedNotRunning;
 
-    /// <summary>Total advanced time in seconds.</summary>
-    public double Time { get; private set; }
+    /// <summary>Game time in seconds advanced by the autoload; it does not move while the tree is paused.</summary>
+    public static double Time { get; private set; }
 
     /// <summary>Running and paused timers.</summary>
-    public int Count { get; private set; }
+    public static int Count { get; private set; }
 
     /// <summary>
     /// Runs <paramref name="callback"/> after <paramref name="delay"/> seconds, then every <paramref name="interval"/>
-    /// seconds if it is above zero. A zero delay fires on the next <see cref="Advance"/>, or in the current one when
-    /// started from a callback.
+    /// seconds if it is above zero. A zero delay fires on the next frame, or right away when started from a callback.
     /// </summary>
-    public TimerHandle Start(float delay, Action callback, float interval = 0f)
+    public static TimerHandle Start(float delay, Action callback, float interval = 0f)
     {
         if (callback == null)
         {
             GD.PushError("TimerManager.Start: callback is null.");
             return TimerHandle.None;
         }
+
+        WarnIfNotRunning();
 
         int slot = AllocateSlot();
         ref TimerSlot timer = ref _slots[slot];
@@ -63,7 +62,7 @@ public sealed class TimerManager
         return new TimerHandle(slot, timer.Generation);
     }
 
-    public bool Stop(TimerHandle handle)
+    public static bool Stop(TimerHandle handle)
     {
         if (!TryGetSlot(handle, out int slot))
             return false;
@@ -76,12 +75,12 @@ public sealed class TimerManager
     }
 
     /// <summary>True while running or paused.</summary>
-    public bool IsActive(TimerHandle handle) => TryGetSlot(handle, out _);
+    public static bool IsActive(TimerHandle handle) => TryGetSlot(handle, out _);
 
-    public bool IsPaused(TimerHandle handle) => TryGetSlot(handle, out int slot) && _slots[slot].Paused;
+    public static bool IsPaused(TimerHandle handle) => TryGetSlot(handle, out int slot) && _slots[slot].Paused;
 
     /// <summary>Seconds until the next fire; 0 if the timer is not active.</summary>
-    public float GetRemaining(TimerHandle handle)
+    public static float GetRemaining(TimerHandle handle)
     {
         if (!TryGetSlot(handle, out int slot))
             return 0f;
@@ -90,7 +89,7 @@ public sealed class TimerManager
         return timer.Paused ? timer.PausedRemaining : (float)Math.Max(0d, timer.FireTime - Time);
     }
 
-    public bool Pause(TimerHandle handle)
+    public static bool Pause(TimerHandle handle)
     {
         if (!TryGetSlot(handle, out int slot) || _slots[slot].Paused)
             return false;
@@ -102,7 +101,7 @@ public sealed class TimerManager
         return true;
     }
 
-    public bool Resume(TimerHandle handle)
+    public static bool Resume(TimerHandle handle)
     {
         if (!TryGetSlot(handle, out int slot) || !_slots[slot].Paused)
             return false;
@@ -116,50 +115,8 @@ public sealed class TimerManager
         return true;
     }
 
-    /// <summary>Moves time forward and fires every due timer in order, each at its own fire time.</summary>
-    public void Advance(float delta)
-    {
-        if (_advancing)
-        {
-            GD.PushError("TimerManager.Advance called from a timer callback; ignored.");
-            return;
-        }
-
-        _advancing = true;
-        double target = Time + Math.Max(0f, delta);
-
-        while (_heapCount > 0)
-        {
-            int slot = _heap[0];
-            ref TimerSlot timer = ref _slots[slot];
-            if (timer.FireTime > target)
-                break;
-
-            Time = Math.Max(Time, timer.FireTime);
-            Action callback = timer.Callback;
-
-            // State is written before the callback so it can stop, pause or restart this timer.
-            if (timer.Interval > 0f)
-            {
-                timer.RepeatCount++;
-                timer.FireTime = timer.StartTime + timer.RepeatCount * (double)timer.Interval;
-                SiftDown(0);
-            }
-            else
-            {
-                HeapRemoveAt(0);
-                Release(slot);
-            }
-
-            callback();
-        }
-
-        Time = target;
-        _advancing = false;
-    }
-
     /// <summary>Stops every timer; all handles become inactive.</summary>
-    public void Clear()
+    public static void Clear()
     {
         for (int slot = 0; slot < _usedSlots; slot++)
         {
@@ -170,7 +127,86 @@ public sealed class TimerManager
         _heapCount = 0;
     }
 
-    private bool TryGetSlot(TimerHandle handle, out int slot)
+    public override void _EnterTree()
+    {
+        if (_instance != null && _instance != this)
+        {
+            GD.PushError("TimerManager: only one instance may run (the Timers plugin autoload); this one is removed.");
+            QueueFree();
+            return;
+        }
+
+        _instance = this;
+    }
+
+    public override void _ExitTree()
+    {
+        if (_instance == this)
+            _instance = null;
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_instance == this)
+            Advance((float)delta);
+    }
+
+    /// <summary>Moves time forward and fires every due timer in order, each at its own fire time.</summary>
+    private static void Advance(float delta)
+    {
+        if (_advancing)
+            return;
+
+        _advancing = true;
+        double target = Time + Math.Max(0f, delta);
+
+        try
+        {
+            while (_heapCount > 0)
+            {
+                int slot = _heap[0];
+                ref TimerSlot timer = ref _slots[slot];
+                if (timer.FireTime > target)
+                    break;
+
+                Time = Math.Max(Time, timer.FireTime);
+                Action callback = timer.Callback;
+
+                // State is written before the callback so it can stop, pause or restart this timer.
+                if (timer.Interval > 0f)
+                {
+                    timer.RepeatCount++;
+                    timer.FireTime = timer.StartTime + timer.RepeatCount * (double)timer.Interval;
+                    SiftDown(0);
+                }
+                else
+                {
+                    HeapRemoveAt(0);
+                    Release(slot);
+                }
+
+                callback();
+            }
+
+            Time = target;
+        }
+        finally
+        {
+            // A throwing callback must not leave the manager stuck; the remaining due timers fire next frame.
+            _advancing = false;
+        }
+    }
+
+    private static void WarnIfNotRunning()
+    {
+        if (_instance != null || _warnedNotRunning || Engine.IsEditorHint())
+            return;
+
+        _warnedNotRunning = true;
+        GD.PushWarning("TimerManager: no running instance; timers will not fire. Enable the Timers plugin (Project Settings → Plugins).");
+    }
+
+    private static bool TryGetSlot(TimerHandle handle, out int slot)
     {
         slot = handle.Slot;
         return handle.IsValid
@@ -179,7 +215,7 @@ public sealed class TimerManager
             && _slots[slot].Generation == handle.Generation;
     }
 
-    private int AllocateSlot()
+    private static int AllocateSlot()
     {
         if (_freeCount > 0)
             return _freeSlots[--_freeCount];
@@ -193,7 +229,7 @@ public sealed class TimerManager
         return slot;
     }
 
-    private void Release(int slot)
+    private static void Release(int slot)
     {
         ref TimerSlot timer = ref _slots[slot];
         timer.Active = false;
@@ -205,7 +241,7 @@ public sealed class TimerManager
         Count--;
     }
 
-    private void Grow()
+    private static void Grow()
     {
         int capacity = _slots.Length * 2;
         Array.Resize(ref _slots, capacity);
@@ -213,14 +249,14 @@ public sealed class TimerManager
         Array.Resize(ref _freeSlots, capacity);
     }
 
-    private void HeapPush(int slot)
+    private static void HeapPush(int slot)
     {
         int index = _heapCount++;
         Place(index, slot);
         SiftUp(index);
     }
 
-    private void HeapRemoveAt(int index)
+    private static void HeapRemoveAt(int index)
     {
         _slots[_heap[index]].HeapIndex = -1;
         int last = --_heapCount;
@@ -232,7 +268,7 @@ public sealed class TimerManager
         SiftDown(index);
     }
 
-    private void SiftUp(int index)
+    private static void SiftUp(int index)
     {
         int slot = _heap[index];
         while (index > 0)
@@ -248,7 +284,7 @@ public sealed class TimerManager
         Place(index, slot);
     }
 
-    private void SiftDown(int index)
+    private static void SiftDown(int index)
     {
         int slot = _heap[index];
         while (true)
@@ -270,13 +306,13 @@ public sealed class TimerManager
         Place(index, slot);
     }
 
-    private void Place(int index, int slot)
+    private static void Place(int index, int slot)
     {
         _heap[index] = slot;
         _slots[slot].HeapIndex = index;
     }
 
-    private bool Before(int a, int b)
+    private static bool Before(int a, int b)
     {
         ref TimerSlot ta = ref _slots[a];
         ref TimerSlot tb = ref _slots[b];

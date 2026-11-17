@@ -4,14 +4,13 @@
 
 ## Yapıldı
 - Repo, dokümanlar, plan (`Timers.md`) — [Claude, 2026-11-17]
-- `TimerHandle`, `TimerManager`; Godot dışında 39 test, 0 allocation — [Claude, 2026-11-17]
+- `TimerHandle`, `TimerManager` (autoload + statik API), `TimersPlugin`, `plugin.cfg`; Godot içinde 38 test — [Claude, 2026-11-17]
 
 ## Yapılıyor
 - (boş)
 
-## Yapılacak (`Timers.md` → Uygulama Sırası)
-- [ ] `TimerRunner` (autoload), `TimersPlugin`, `plugin.cfg`
+## Yapılacak
+- [ ] Editörde eklentiyi etkinleştirip autoload'un eklendiğini doğrula; üretilen `.cs.uid` dosyalarını commit'le
 
 ## Notlar
-- `TimerHandle/`, `TimerManager/` için `.cs.uid` yok; Godot editörü açılınca üretilir, commit'lenmeli.
-- İlk kullanıcı: AbilitySystem effect'leri (süre ve periyot).
+- Testler Godot içinde headless çalıştırılır: `Godot_..._console.exe --headless --path <proje> res://<test sahnesi>`; geçici test sahnesi proje kökünde açılıp sonra silinir.
